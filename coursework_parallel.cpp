@@ -72,13 +72,26 @@ private:
     mutable std::mutex mutex_;
 };
 
+std::string normalizeWord(const std::string& word) {
+    std::string normalized;
+    for (char ch : word) {
+        if ((int(ch) >= 0) && (std::isalpha(ch))) { // Check if the character is alphabetic
+            normalized += std::tolower(ch); // Convert to lowercase
+        }
+    }
+    return normalized;
+}
+
 void processFiles(InvertedIndex& index, const std::vector<std::string>& files) {
     for (const auto& file : files) {
         std::ifstream inFile(file);
         std::string word;
         int position = 0;
         while (inFile >> word) {
-            index.add(word, file, position);
+            std::string normalizedWord = normalizeWord(word);
+            if (!normalizedWord.empty()) {
+                index.add(normalizedWord, file, position);
+            }
             ++position;
         }
     }
@@ -88,7 +101,7 @@ int main(int argc, char* argv[]) {
     InvertedIndex index;
     std::vector<std::string> files;
     std::vector<std::thread> threads;
-    int numThreads = 4;//std::thread::hardware_concurrency();
+    int numThreads = 1;//std::thread::hardware_concurrency();
 
     // Read directory and file arguments
     std::string directoryPath = "../aclImdb/train/pos"; // Replace with actual directory path

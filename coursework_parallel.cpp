@@ -37,13 +37,13 @@ public:
 
     void printIndex() const {
         for (const auto& pair : index_) {
-            std::cout << pair.first << ": ";
+            std::cout << pair.first << " - ";
             for (const auto& wp : pair.second) {
-                std::cout << wp.filename << " [";
+                std::cout << "\t" << wp.filename << " [";
                 for (int pos : wp.positions) {
                     std::cout << pos << " ";
                 }
-                std::cout << "]; ";
+                std::cout << "];" << std::endl;
             }
             std::cout << std::endl;
         }
@@ -52,13 +52,13 @@ public:
     void printWordInfo(const std::string& word) const {
         auto it = index_.find(word);
         if (it != index_.end()) {
-            std::cout << word << ": ";
+            std::cout << word << " — ";
             for (const auto& wp : it->second) {
-                std::cout << wp.filename << " [";
+                std::cout << "\t" << wp.filename << " [";
                 for (int pos : wp.positions) {
                     std::cout << pos << " ";
                 }
-                std::cout << "]; ";
+                std::cout << "];" << std::endl;
             }
             std::cout << std::endl;
         }
@@ -132,6 +132,7 @@ int main(int argc, char* argv[]) {
     }
 
     index.printIndex();
+    //index.printWordInfo("white");
 
     return 0;
 }

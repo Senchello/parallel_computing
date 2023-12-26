@@ -4,6 +4,10 @@
 #include <vector>
 #include <thread>
 #include <mutex>
+#include <condition_variable>
+#include <atomic>
+#include <queue>
+#include <functional>
 #include <filesystem>
 #include <unordered_map>
 
@@ -52,7 +56,7 @@ public:
     void printWordInfo(const std::string& word) const {
         auto it = index_.find(word);
         if (it != index_.end()) {
-            std::cout << word << " — ";
+            std::cout << word << " - ";
             for (const auto& wp : it->second) {
                 std::cout << "\t" << wp.filename << " [";
                 for (int pos : wp.positions) {
@@ -72,6 +76,64 @@ private:
     mutable std::mutex mutex_;
 };
 
+class ThreadPool {
+public:
+    ThreadPool(size_t numThreads) {
+        start(numThreads);
+    }
+
+    ~ThreadPool() {
+        stop();
+    }
+
+    void enqueue(std::function<void()> task) {
+        {
+            std::unique_lock<std::mutex> lock(queueMutex);
+            tasks.emplace(std::move(task));
+        }
+        condition.notify_one();
+    }
+
+private:
+    std::vector<std::thread> workers;
+    std::queue<std::function<void()>> tasks;
+
+    std::mutex queueMutex;
+    std::condition_variable condition;
+    std::atomic<bool> stopFlag;
+
+    void start(size_t numThreads) {
+        for (size_t i = 0; i < numThreads; ++i) {
+            workers.emplace_back([=] {
+                while (true) {
+                    std::function<void()> task;
+
+                    {
+                        std::unique_lock<std::mutex> lock(queueMutex);
+                        condition.wait(lock, [=] { return stopFlag || !tasks.empty(); });
+                        if (stopFlag && tasks.empty())
+                            break;
+
+                        task = std::move(tasks.front());
+                        tasks.pop();
+                    }
+
+                    task();
+                }
+                });
+        }
+    }
+
+    void stop() noexcept {
+        stopFlag.store(true);
+        condition.notify_all();
+        for (auto& thread : workers) {
+            if (thread.joinable())
+                thread.join();
+        }
+    }
+};
+
 std::string normalizeWord(const std::string& word) {
     std::string normalized;
     for (char ch : word) {
@@ -82,26 +144,26 @@ std::string normalizeWord(const std::string& word) {
     return normalized;
 }
 
-void processFiles(InvertedIndex& index, const std::vector<std::string>& files) {
-    for (const auto& file : files) {
-        std::ifstream inFile(file);
-        std::string word;
-        int position = 0;
-        while (inFile >> word) {
-            std::string normalizedWord = normalizeWord(word);
-            if (!normalizedWord.empty()) {
-                index.add(normalizedWord, file, position);
-            }
-            ++position;
+
+void processFile(InvertedIndex& index, const std::string& file) {
+    std::ifstream inFile(file);
+    std::string word;
+    int position = 0;
+    while (inFile >> word) {
+        std::string normalizedWord = normalizeWord(word);
+        if (!normalizedWord.empty()) {
+            index.add(normalizedWord, file, position);
         }
+        ++position;
     }
 }
+
 
 int main(int argc, char* argv[]) {
     InvertedIndex index;
     std::vector<std::string> files;
     std::vector<std::thread> threads;
-    int numThreads = 1;//std::thread::hardware_concurrency();
+    int numThreads = 4;//std::thread::hardware_concurrency();
 
     // Read directory and file arguments
     std::string directoryPath = "../aclImdb/train/pos"; // Replace with actual directory path
@@ -113,26 +175,14 @@ int main(int argc, char* argv[]) {
     }
 
     // Distribute files among threads
-    int filesPerThread = files.size() / numThreads;
-    int startIndex = 0;
-    for (int i = 0; i < numThreads; ++i) {
-        int endIndex = startIndex + filesPerThread;
-        if (i == numThreads - 1) {
-            endIndex = files.size();
-        }
+    ThreadPool pool(numThreads);
 
-        std::vector<std::string> subset(files.begin() + startIndex, files.begin() + endIndex);
-        threads.emplace_back(processFiles, std::ref(index), subset);
-        startIndex = endIndex;
+    for (const auto& file : files) {
+        pool.enqueue([&index, file] { processFile(index, file); });
     }
 
-    // Join threads
-    for (auto& t : threads) {
-        t.join();
-    }
-
-    index.printIndex();
-    //index.printWordInfo("white");
+    //pool.enqueue([&index] { index.printIndex(); });
+    pool.enqueue([&index] { index.printWordInfo("their"); });
 
     return 0;
 }

@@ -9,6 +9,7 @@
 #include <queue>
 #include <functional>
 #include <filesystem>
+#include <chrono>
 #include <unordered_map>
 
 namespace fs = std::filesystem;
@@ -18,7 +19,7 @@ struct WordPosition {
     std::vector<int> positions;
 
     WordPosition(const std::string& file, int position)
-        : filename(file), positions(1, position) {} // Initialize vector with one element
+        : filename(file), positions(1, position) {}
 };
 
 class InvertedIndex {
@@ -26,11 +27,11 @@ public:
     void add(const std::string& word, const std::string& filename, int position) {
         std::lock_guard<std::mutex> guard(mutex_);
         bool exists = false;
-        for (WordPosition wpos : index_[word]) {
-            if (filename == wpos.filename) {
-                wpos.positions.push_back(position);
+        for (int i = 0; i < index_[word].size(); i++) {
+            if (filename == index_[word][i].filename) {
+                index_[word][i].positions.push_back(position);
                 exists = true;
-                break;
+                return;
             }
         }
         if (!exists) {
@@ -137,8 +138,8 @@ private:
 std::string normalizeWord(const std::string& word) {
     std::string normalized;
     for (char ch : word) {
-        if ((int(ch) >= 0) && (std::isalpha(ch))) { // Check if the character is alphabetic
-            normalized += std::tolower(ch); // Convert to lowercase
+        if ((int(ch) >= 0) && (std::isalpha(ch))) {
+            normalized += std::tolower(ch);
         }
     }
     return normalized;
@@ -163,7 +164,7 @@ int main(int argc, char* argv[]) {
     InvertedIndex index;
     std::vector<std::string> files;
     std::vector<std::thread> threads;
-    int numThreads = 4;//std::thread::hardware_concurrency();
+    int numThreads = 16;
 
     // Read directory and file arguments
     std::string directoryPath = "../aclImdb/train/pos"; // Replace with actual directory path
@@ -173,6 +174,41 @@ int main(int argc, char* argv[]) {
             files.push_back(entry.path().string());
         }
     }
+    /*
+    directoryPath = "../aclImdb/train/neg";
+
+    for (const auto& entry : fs::directory_iterator(directoryPath)) {
+        if (entry.is_regular_file()) {
+            files.push_back(entry.path().string());
+        }
+    }
+
+    directoryPath = "../aclImdb/test/pos";
+
+    for (const auto& entry : fs::directory_iterator(directoryPath)) {
+        if (entry.is_regular_file()) {
+            files.push_back(entry.path().string());
+        }
+    }
+
+    directoryPath = "../aclImdb/test/neg";
+
+    for (const auto& entry : fs::directory_iterator(directoryPath)) {
+        if (entry.is_regular_file()) {
+            files.push_back(entry.path().string());
+        }
+    }
+
+    directoryPath = "../aclImdb/train/unsup";
+
+    for (const auto& entry : fs::directory_iterator(directoryPath)) {
+        if (entry.is_regular_file()) {
+            files.push_back(entry.path().string());
+        }
+    }
+    */
+    // Start the timer
+    auto startTime = std::chrono::high_resolution_clock::now();
 
     // Distribute files among threads
     ThreadPool pool(numThreads);
@@ -181,8 +217,19 @@ int main(int argc, char* argv[]) {
         pool.enqueue([&index, file] { processFile(index, file); });
     }
 
-    //pool.enqueue([&index] { index.printIndex(); });
-    pool.enqueue([&index] { index.printWordInfo("their"); });
+    pool.~ThreadPool(); // Explicitly call the destructor to wait for tasks to complete.
 
+    // Stop the timer
+    auto endTime = std::chrono::high_resolution_clock::now();
+
+    // Calculate the duration
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
+
+    std::cout << "Time taken to create inverted index with " << numThreads << " threads: " << duration.count() << " milliseconds" << std::endl;
+
+    //pool.enqueue([&index] { index.printIndex(); });
+    //pool.enqueue([&index] { index.printWordInfo("their"); });
+
+    index.printWordInfo("their");
     return 0;
 }

@@ -22,20 +22,22 @@ struct WordPosition {
 class InvertedIndex {
 public:
     void add(const std::string& word, const std::string& filename, int position) {
+        std::unique_lock<std::mutex> locklock(mutex_);
+        auto& wpos = index_[word];
+        locklock.unlock();
 
-        std::unique_lock<std::mutex> short_lock(mutex_);
-        WordPosition& wpos = index_[word];
+        // Lock for specific word position
         std::lock_guard<std::mutex> guard(wpos.indexmut);
-        for (int i = 0; i < wpos.occurences.size(); i++) {
-            if (filename == wpos.occurences[i].first) {
-                wpos.occurences[i].second.push_back(position);
-                return;
-            }
+
+        // Search and add occurrence
+        auto it = std::find_if(wpos.occurences.begin(), wpos.occurences.end(),
+            [&filename](const auto& occ) { return occ.first == filename; });
+        if (it != wpos.occurences.end()) {
+            it->second.push_back(position);
         }
-        std::pair<std::string, std::vector<int>> new_occur;
-        new_occur.first = filename;
-        new_occur.second.push_back(position);
-        index_[word].occurences.push_back(new_occur);
+        else {
+            wpos.occurences.emplace_back(filename, std::vector<int>{position});
+        }
     }
 
     void printIndex() const {
@@ -51,7 +53,7 @@ public:
             std::cout << std::endl;
         }
     }
-    
+
     void printWordInfo(const std::string& word) {
         if (index_.count(word) > 0) {
             std::cout << word << " - ";
@@ -68,7 +70,7 @@ public:
             std::cout << "Word '" << word << "' not found in index." << std::endl;
         }
     }
-    
+
 
 private:
     std::unordered_map<std::string, WordPosition> index_;
@@ -162,7 +164,7 @@ int main(int argc, char* argv[]) {
     InvertedIndex index;
     std::vector<std::string> files;
     std::vector<std::thread> threads;
-    int numThreads = 16;
+    int numThreads = 1;
 
     // Read directory and file arguments
     std::string directoryPath = "../aclImdb/train/pos"; // Replace with actual directory path
@@ -172,7 +174,7 @@ int main(int argc, char* argv[]) {
             files.push_back(entry.path().string());
         }
     }
-    
+
     directoryPath = "../aclImdb/train/neg";
 
     for (const auto& entry : fs::directory_iterator(directoryPath)) {
@@ -204,7 +206,7 @@ int main(int argc, char* argv[]) {
             files.push_back(entry.path().string());
         }
     }
-    
+
     // Start the timer
     auto startTime = std::chrono::high_resolution_clock::now();
 

@@ -15,37 +15,35 @@
 namespace fs = std::filesystem;
 
 struct WordPosition {
-    std::string filename;
-    std::vector<int> positions;
-
-    WordPosition(const std::string& file, int position)
-        : filename(file), positions(1, position) {}
+    std::vector<std::pair<std::string, std::vector<int>>> occurences;
+    std::mutex indexmut;
 };
 
 class InvertedIndex {
 public:
     void add(const std::string& word, const std::string& filename, int position) {
-        std::lock_guard<std::mutex> guard(mutex_);
-        bool exists = false;
-        for (int i = 0; i < index_[word].size(); i++) {
-            if (filename == index_[word][i].filename) {
-                index_[word][i].positions.push_back(position);
-                exists = true;
+
+        std::unique_lock<std::mutex> short_lock(mutex_);
+        WordPosition& wpos = index_[word];
+        std::lock_guard<std::mutex> guard(wpos.indexmut);
+        for (int i = 0; i < wpos.occurences.size(); i++) {
+            if (filename == wpos.occurences[i].first) {
+                wpos.occurences[i].second.push_back(position);
                 return;
             }
         }
-        if (!exists) {
-            WordPosition wpos_new(filename, position);
-            index_[word].push_back(wpos_new);
-        }
+        std::pair<std::string, std::vector<int>> new_occur;
+        new_occur.first = filename;
+        new_occur.second.push_back(position);
+        index_[word].occurences.push_back(new_occur);
     }
 
     void printIndex() const {
         for (const auto& pair : index_) {
             std::cout << pair.first << " - ";
-            for (const auto& wp : pair.second) {
-                std::cout << "\t" << wp.filename << " [";
-                for (int pos : wp.positions) {
+            for (const auto& wp : pair.second.occurences) {
+                std::cout << "\t" << wp.first << " [";
+                for (int pos : wp.second) {
                     std::cout << pos << " ";
                 }
                 std::cout << "];" << std::endl;
@@ -53,14 +51,13 @@ public:
             std::cout << std::endl;
         }
     }
-
-    void printWordInfo(const std::string& word) const {
-        auto it = index_.find(word);
-        if (it != index_.end()) {
+    
+    void printWordInfo(const std::string& word) {
+        if (index_.count(word) > 0) {
             std::cout << word << " - ";
-            for (const auto& wp : it->second) {
-                std::cout << "\t" << wp.filename << " [";
-                for (int pos : wp.positions) {
+            for (const auto& wp : index_[word].occurences) {
+                std::cout << "\t" << wp.first << " [";
+                for (int pos : wp.second) {
                     std::cout << pos << " ";
                 }
                 std::cout << "];" << std::endl;
@@ -71,9 +68,10 @@ public:
             std::cout << "Word '" << word << "' not found in index." << std::endl;
         }
     }
+    
 
 private:
-    std::unordered_map<std::string, std::vector<WordPosition>> index_;
+    std::unordered_map<std::string, WordPosition> index_;
     mutable std::mutex mutex_;
 };
 
@@ -174,7 +172,7 @@ int main(int argc, char* argv[]) {
             files.push_back(entry.path().string());
         }
     }
-    /*
+    
     directoryPath = "../aclImdb/train/neg";
 
     for (const auto& entry : fs::directory_iterator(directoryPath)) {
@@ -206,7 +204,7 @@ int main(int argc, char* argv[]) {
             files.push_back(entry.path().string());
         }
     }
-    */
+    
     // Start the timer
     auto startTime = std::chrono::high_resolution_clock::now();
 
@@ -225,11 +223,12 @@ int main(int argc, char* argv[]) {
     // Calculate the duration
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
 
-    std::cout << "Time taken to create inverted index with " << numThreads << " threads: " << duration.count() << " milliseconds" << std::endl;
-
     //pool.enqueue([&index] { index.printIndex(); });
     //pool.enqueue([&index] { index.printWordInfo("their"); });
 
+    //index.printIndex();
     index.printWordInfo("their");
+
+    std::cout << "Time taken to create inverted index with " << numThreads << " threads: " << duration.count() << " milliseconds" << std::endl;
     return 0;
 }

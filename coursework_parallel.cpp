@@ -12,6 +12,11 @@
 #include <filesystem>
 #include <chrono>
 #include <unordered_map>
+#include <boost/asio.hpp>
+#include <boost/bind/bind.hpp>
+
+namespace asio = boost::asio;
+using asio::ip::tcp;
 
 namespace fs = std::filesystem;
 
@@ -87,6 +92,7 @@ public:
         else {
             ss << "Word '" << word << "' not found in index." << std::endl;
         }
+        std::cout << ss.str() << std::endl << ss.str().size() << std::endl;
         return ss.str();
     }
 
@@ -185,42 +191,127 @@ void scan(std::string dirPath, std::vector<std::string>* files) {
     }
 }
 
+class Session : public std::enable_shared_from_this<Session> {
+public:
+    Session(tcp::socket socket, InvertedIndex& index)
+        : socket_(std::move(socket)), index_(index) {}
 
-int main(int argc, char* argv[]) {
-    InvertedIndex index;
-    std::vector<std::string> files;
-    std::vector<std::thread> threads;
-    int numThreads = 16;
-
-    scan("../aclImdb/train/pos", &files);
-    scan("../aclImdb/train/neg", &files);
-    scan("../aclImdb/test/pos", &files);
-    scan("../aclImdb/test/neg", &files);
-    scan("../aclImdb/train/unsup", &files);
-
-
-    auto startTime = std::chrono::high_resolution_clock::now();
-    ThreadPool pool(numThreads);
-
-    for (const auto& file : files) {
-        pool.enqueue([&index, file] { processFile(index, file); });
+    void start() {
+        doRead();
     }
 
-    pool.~ThreadPool(); // Explicitly call the destructor to wait for tasks to complete.
+private:
+    tcp::socket socket_;
+    enum { max_length = 1024 };
+    char data_[max_length];
+    InvertedIndex& index_;
 
-    // Stop the timer
-    auto endTime = std::chrono::high_resolution_clock::now();
+    void doRead() {
+        auto self(shared_from_this());
+        socket_.async_read_some(boost::asio::buffer(data_, max_length),
+            [this, self](boost::system::error_code ec, std::size_t length) {
+                if (!ec) {
+                    std::string word(data_, length);
+                    // Ensure we only read the word up to the newline
+                    auto endOfWord = word.find('\n');
+                    if (endOfWord != std::string::npos) {
+                        word.erase(endOfWord);
+                    }
+                    // Now we get the word info and initiate an asynchronous write
+                    auto info = std::make_shared<std::string>(index_.getWordInfo(word));
+                    doWrite(info);
+                }
+                else {
+                    // Handle the error, for example, by logging or cleaning up the session
+                }
+            });
+    }
 
-    // Calculate the duration
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
+    void doWrite(std::shared_ptr<std::string> msg) {
+        auto self(shared_from_this());
+        boost::asio::async_write(socket_, boost::asio::buffer(*msg),
+            [this, self, msg](boost::system::error_code ec, std::size_t /*length*/) {
+                if (!ec) {
+                    // If you want to read again, uncomment the next line
+                    doRead();
+                }
+                else {
+                    // Handle the error, for example, by logging or cleaning up the session
+                }
+            });
+    }
+};
 
-    //pool.enqueue([&index] { index.printIndex(); });
-    //pool.enqueue([&index] { index.printWordInfo("their"); });
 
-    //index.printIndex();
-    //index.printWordInfo("their");
+class Server {
+public:
+    Server(asio::io_context& io_context, short port, InvertedIndex& index, ThreadPool& pool)
+        : acceptor_(io_context, tcp::endpoint(tcp::v4(), port)), index_(index), pool_(pool) {
+        doAccept();
+    }
 
-    std::cout << "Time taken to create inverted index with " << numThreads << " threads: " << duration.count() << " milliseconds" << std::endl;
+private:
+    void doAccept() {
+        acceptor_.async_accept([this](boost::system::error_code ec, tcp::socket socket) {
+            if (!ec) {
+                pool_.enqueue([s = std::make_shared<Session>(std::move(socket), index_)]() { s->start(); });
+            }
+            doAccept();
+            });
+    }
+
+    tcp::acceptor acceptor_;
+    InvertedIndex& index_;
+    ThreadPool& pool_;
+};
+
+
+int main(int argc, char* argv[]) {
+    try {
+        asio::io_context io_context;
+        InvertedIndex index;
+        std::vector<std::string> files;
+        std::vector<std::thread> threads;
+        int numThreads = 16;
+
+        scan("../aclImdb/train/pos", &files);
+        scan("../aclImdb/train/neg", &files);
+        scan("../aclImdb/test/pos", &files);
+        scan("../aclImdb/test/neg", &files);
+        scan("../aclImdb/train/unsup", &files);
+
+
+        auto startTime = std::chrono::high_resolution_clock::now();
+        ThreadPool pool(numThreads);
+
+        for (const auto& file : files) {
+            pool.enqueue([&index, file] { processFile(index, file); });
+        }
+
+        pool.~ThreadPool(); // Explicitly call the destructor to wait for tasks to complete.
+
+        // Stop the timer
+        auto endTime = std::chrono::high_resolution_clock::now();
+
+        // Calculate the duration
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
+
+        //pool.enqueue([&index] { index.printIndex(); });
+        //pool.enqueue([&index] { index.printWordInfo("their"); });
+
+        //index.printIndex();
+        //index.printWordInfo("their");
+
+        std::cout << "Time taken to create inverted index with " << numThreads << " threads: " << duration.count() << " milliseconds" << std::endl;
+
+        ThreadPool cliPool(4);  // Adjust the number of threads as needed
+
+        Server server(io_context, 1234 /* port */, index, cliPool);
+        io_context.run();
+    }
+    catch (std::exception& e) {
+        std::cerr << "Exception: " << e.what() << "\n";
+    }
 
     return 0;
 }

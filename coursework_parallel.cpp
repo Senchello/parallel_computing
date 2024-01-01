@@ -1,5 +1,6 @@
 #include <iostream>
 #include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 #include <thread>
@@ -71,6 +72,23 @@ public:
         }
     }
 
+    std::string getWordInfo(const std::string& word) {
+        std::stringstream ss;
+        if (index_.count(word) > 0) {
+            ss << word << " - ";
+            for (const auto& wp : index_[word].occurences) {
+                ss << "\t" << wp.first << " [";
+                for (int pos : wp.second) {
+                    ss << pos << " ";
+                }
+                ss << "];" << std::endl;
+            }
+        }
+        else {
+            ss << "Word '" << word << "' not found in index." << std::endl;
+        }
+        return ss.str();
+    }
 
 private:
     std::unordered_map<std::string, WordPosition> index_;
@@ -159,58 +177,29 @@ void processFile(InvertedIndex& index, const std::string& file) {
     }
 }
 
+void scan(std::string dirPath, std::vector<std::string>* files) {
+    for (const auto& entry : fs::directory_iterator(dirPath)) {
+        if (entry.is_regular_file()) {
+            files->push_back(entry.path().string());
+        }
+    }
+}
+
 
 int main(int argc, char* argv[]) {
     InvertedIndex index;
     std::vector<std::string> files;
     std::vector<std::thread> threads;
-    int numThreads = 1;
+    int numThreads = 16;
 
-    // Read directory and file arguments
-    std::string directoryPath = "../aclImdb/train/pos"; // Replace with actual directory path
+    scan("../aclImdb/train/pos", &files);
+    scan("../aclImdb/train/neg", &files);
+    scan("../aclImdb/test/pos", &files);
+    scan("../aclImdb/test/neg", &files);
+    scan("../aclImdb/train/unsup", &files);
 
-    for (const auto& entry : fs::directory_iterator(directoryPath)) {
-        if (entry.is_regular_file()) {
-            files.push_back(entry.path().string());
-        }
-    }
 
-    directoryPath = "../aclImdb/train/neg";
-
-    for (const auto& entry : fs::directory_iterator(directoryPath)) {
-        if (entry.is_regular_file()) {
-            files.push_back(entry.path().string());
-        }
-    }
-
-    directoryPath = "../aclImdb/test/pos";
-
-    for (const auto& entry : fs::directory_iterator(directoryPath)) {
-        if (entry.is_regular_file()) {
-            files.push_back(entry.path().string());
-        }
-    }
-
-    directoryPath = "../aclImdb/test/neg";
-
-    for (const auto& entry : fs::directory_iterator(directoryPath)) {
-        if (entry.is_regular_file()) {
-            files.push_back(entry.path().string());
-        }
-    }
-
-    directoryPath = "../aclImdb/train/unsup";
-
-    for (const auto& entry : fs::directory_iterator(directoryPath)) {
-        if (entry.is_regular_file()) {
-            files.push_back(entry.path().string());
-        }
-    }
-
-    // Start the timer
     auto startTime = std::chrono::high_resolution_clock::now();
-
-    // Distribute files among threads
     ThreadPool pool(numThreads);
 
     for (const auto& file : files) {
@@ -229,8 +218,9 @@ int main(int argc, char* argv[]) {
     //pool.enqueue([&index] { index.printWordInfo("their"); });
 
     //index.printIndex();
-    index.printWordInfo("their");
+    //index.printWordInfo("their");
 
     std::cout << "Time taken to create inverted index with " << numThreads << " threads: " << duration.count() << " milliseconds" << std::endl;
+
     return 0;
 }

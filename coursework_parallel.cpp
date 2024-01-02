@@ -141,6 +141,7 @@ private:
     }
 };
 
+
 std::string normalizeWord(const std::string& word) {
     std::string normalized;
     for (char ch : word) {
@@ -175,18 +176,23 @@ void scan(std::string dirPath, std::vector<std::string>* files) {
 
 class Session : public std::enable_shared_from_this<Session> {
 public:
-    Session(tcp::socket socket, InvertedIndex& index)
-        : socket_(std::move(socket)), index_(index) {}
+    Session(tcp::socket socket, InvertedIndex& index, std::function<void()> onSessionEnd)
+        : socket_(std::move(socket)), index_(index), onSessionEnd_(onSessionEnd) {}
 
     void start() {
         doRead();
     }
 
+    ~Session() {
+        onSessionEnd_();
+    }
+
 private:
     tcp::socket socket_;
-    enum { max_length = 1024 };
+    enum { max_length = 32768 };
     char data_[max_length];
     InvertedIndex& index_;
+    std::function<void()> onSessionEnd_;
 
     void doRead() {
         auto self(shared_from_this());
@@ -199,6 +205,8 @@ private:
                     if (endOfWord != std::string::npos) {
                         word.erase(endOfWord);
                     }
+                    if (word == "q")
+                        return;
                     // Now we get the word info and initiate an asynchronous write
                     auto info = std::make_shared<std::string>(index_.getWordInfo(word));
                     doWrite(info);
@@ -229,23 +237,33 @@ private:
 class Server {
 public:
     Server(asio::io_context& io_context, short port, InvertedIndex& index, ThreadPool& pool)
-        : acceptor_(io_context, tcp::endpoint(tcp::v4(), port)), index_(index), pool_(pool) {
+        : acceptor_(io_context, tcp::endpoint(tcp::v4(), port)), index_(index), pool_(pool), isSessionActive_(false) {
         doAccept();
     }
 
 private:
     void doAccept() {
-        acceptor_.async_accept([this](boost::system::error_code ec, tcp::socket socket) {
-            if (!ec) {
-                pool_.enqueue([s = std::make_shared<Session>(std::move(socket), index_)]() { s->start(); });
-            }
-            doAccept();
-            });
+        if (!isSessionActive_) {
+            acceptor_.async_accept([this](boost::system::error_code ec, tcp::socket socket) {
+                if (!ec) {
+                    isSessionActive_ = true;
+                    auto session = std::make_shared<Session>(std::move(socket), index_, [this]() { this->sessionEnded(); });
+                    session->start();
+                }
+                doAccept();
+                });
+        }
+    }
+
+    void sessionEnded() {
+        isSessionActive_ = false;
+        doAccept(); // Check for new connections
     }
 
     tcp::acceptor acceptor_;
     InvertedIndex& index_;
     ThreadPool& pool_;
+    bool isSessionActive_;
 };
 
 
@@ -276,12 +294,12 @@ int main(int argc, char* argv[]) {
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
 
         //index.printIndex();
-        std::cout << index.getWordInfo("black") << std::endl;
+        //std::cout << index.getWordInfo("black") << std::endl;
 
         std::cout << "Time taken to create inverted index with " << numThreads << " threads: " << duration.count() << " milliseconds" << std::endl;
 
         ThreadPool cliPool(1);
-
+       
         Server server(io_context, 1234 /* port */, index, cliPool);
         io_context.run();
     }

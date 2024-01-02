@@ -60,23 +60,6 @@ public:
         }
     }
 
-    void printWordInfo(const std::string& word) {
-        if (index_.count(word) > 0) {
-            std::cout << word << " - ";
-            for (const auto& wp : index_[word].occurences) {
-                std::cout << "\t" << wp.first << " [";
-                for (int pos : wp.second) {
-                    std::cout << pos << " ";
-                }
-                std::cout << "];" << std::endl;
-            }
-            std::cout << std::endl;
-        }
-        else {
-            std::cout << "Word '" << word << "' not found in index." << std::endl;
-        }
-    }
-
     std::string getWordInfo(const std::string& word) {
         std::stringstream ss;
         if (index_.count(word) > 0) {
@@ -92,7 +75,6 @@ public:
         else {
             ss << "Word '" << word << "' not found in index." << std::endl;
         }
-        std::cout << ss.str() << std::endl << ss.str().size() << std::endl;
         return ss.str();
     }
 
@@ -222,7 +204,8 @@ private:
                     doWrite(info);
                 }
                 else {
-                    // Handle the error, for example, by logging or cleaning up the session
+                    std::cerr << "Error " << ec << " occured =(" << std::endl;
+                    // Handle the error
                 }
             });
     }
@@ -232,11 +215,11 @@ private:
         boost::asio::async_write(socket_, boost::asio::buffer(*msg),
             [this, self, msg](boost::system::error_code ec, std::size_t /*length*/) {
                 if (!ec) {
-                    // If you want to read again, uncomment the next line
                     doRead();
                 }
                 else {
-                    // Handle the error, for example, by logging or cleaning up the session
+                    std::cerr << "Error " << ec << " occured =(" << std::endl;
+                    // Handle the error
                 }
             });
     }
@@ -289,22 +272,15 @@ int main(int argc, char* argv[]) {
         }
 
         pool.~ThreadPool(); // Explicitly call the destructor to wait for tasks to complete.
-
-        // Stop the timer
         auto endTime = std::chrono::high_resolution_clock::now();
-
-        // Calculate the duration
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
 
-        //pool.enqueue([&index] { index.printIndex(); });
-        //pool.enqueue([&index] { index.printWordInfo("their"); });
-
         //index.printIndex();
-        //index.printWordInfo("their");
+        std::cout << index.getWordInfo("black") << std::endl;
 
         std::cout << "Time taken to create inverted index with " << numThreads << " threads: " << duration.count() << " milliseconds" << std::endl;
 
-        ThreadPool cliPool(4);  // Adjust the number of threads as needed
+        ThreadPool cliPool(1);
 
         Server server(io_context, 1234 /* port */, index, cliPool);
         io_context.run();
